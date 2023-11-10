@@ -84,42 +84,38 @@ private:
     mutable std::optional<FormulaInterface::Value> cache_;
 };
 
-bool Cell::WouldIntroduceCircularDependency(const Impl& new_impl) const 
+
+void Cell::WouldIntroduceCircularDependency(const Impl& new_impl) const
 {
-    if (new_impl.GetReferencedCells().empty())
+    if (!new_impl.GetReferencedCells().empty())
     {
-        return false;
-    }
-    std::unordered_set<const Cell*> referenced;
-
-    for (const auto& pos : new_impl.GetReferencedCells()) 
-    {
-        referenced.insert(sheet_.GetCellPtr(pos));
-    }
-
-    std::unordered_set<const Cell*> visited;
-    std::stack<const Cell*> to_visit;
-    to_visit.push(this);
-    while (!to_visit.empty())
-    {
-        const Cell* current = to_visit.top();
-        to_visit.pop();
-        visited.insert(current);
-        if (referenced.find(current) != referenced.end())
+        std::unordered_set<const Cell*> referenced;
+        for (const auto& pos : new_impl.GetReferencedCells())
         {
-            return true;
+            referenced.insert(sheet_.GetCellPtr(pos));
         }
-
-        for (const Cell* incoming : current->lhs_nodes_)
+        std::unordered_set<const Cell*> visited;
+        std::stack<const Cell*> to_visit;
+        to_visit.push(this);
+        while (!to_visit.empty())
         {
-            if (visited.find(incoming) == visited.end())
+            const Cell* current = to_visit.top();
+            to_visit.pop();
+            visited.insert(current);
+            if (referenced.find(current) != referenced.end())
             {
-                to_visit.push(incoming);
+                throw CircularDependencyException("");
+            }
+
+            for (const Cell* incoming : current->lhs_nodes_)
+            {
+                if (visited.find(incoming) == visited.end())
+                {
+                    to_visit.push(incoming);
+                }
             }
         }
     }
-
-    return false;
 }
 
 void Cell::InvalidateCacheRecursive(bool force) 
@@ -131,6 +127,19 @@ void Cell::InvalidateCacheRecursive(bool force)
         {
             incoming->InvalidateCacheRecursive();
         }
+    }
+}
+
+void Cell::UpdateReferencedCells()
+{
+    for (const auto& pos : impl_->GetReferencedCells()) {
+        Cell* outgoing = sheet_.GetCellPtr(pos);
+        if (!outgoing) {
+            sheet_.SetCell(pos, "");
+            outgoing = sheet_.GetCellPtr(pos);
+        }
+        rhs_nodes_.insert(outgoing);
+        outgoing->lhs_nodes_.insert(this);
     }
 }
 
@@ -148,49 +157,29 @@ void Cell::Set(std::string text) {
 
     if (text.empty())
     {
-        //пустота
         impl = std::make_unique<EmptyImpl>(); 
     }
     else if (text.size() > 1 && text[0] == FORMULA_SIGN)
     {
-        // формула 
         impl = std::make_unique<FormulaImpl>(std::move(text), sheet_);
     }
     else
     { 
-        // текст 
         impl = std::make_unique<TextImpl>(std::move(text));
     }
-
-    if (WouldIntroduceCircularDependency(*impl))
-    {        
-        throw CircularDependencyException("");
-    }
-    //std::unique_ptr<Impl> impl_
-    //отдаем указатель на значение
+    WouldIntroduceCircularDependency(*impl);    
     impl_ = std::move(impl);
-
     for (Cell* outgoing : rhs_nodes_) {
         outgoing->lhs_nodes_.erase(this);
     }
-
     rhs_nodes_.clear();
-
-    for (const auto& pos : impl_->GetReferencedCells()) {
-        Cell* outgoing = sheet_.GetCellPtr(pos);
-        if (!outgoing) {
-            sheet_.SetCell(pos, "");
-            outgoing = sheet_.GetCellPtr(pos);
-        }
-        rhs_nodes_.insert(outgoing);
-        outgoing->lhs_nodes_.insert(this);
-    }
-
+    UpdateReferencedCells();
     InvalidateCacheRecursive(true);
 }
 
-void Cell::Clear() {
-    impl_ = std::make_unique<EmptyImpl>();
+void Cell::Clear() 
+{
+    Set("");
 }
 
 Cell::Value Cell::GetValue() const {
