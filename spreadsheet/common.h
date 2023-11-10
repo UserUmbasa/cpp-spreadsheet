@@ -48,7 +48,7 @@ public:
 
     bool operator==(FormulaError rhs) const;
 
-    std::string_view ToString() const;
+    std::string ToString() const;
 
 private:
     Category category_;
@@ -76,6 +76,7 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+//интерфейс ячейки
 class CellInterface {
 public:
     // Либо текст ячейки, либо значение формулы, либо сообщение об ошибке из
